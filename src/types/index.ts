@@ -13,6 +13,16 @@ export interface AllowedDestinationsOptions {
   destinations: string[];
 }
 
+export type AllowedDestinationsRuleOptions = AllowedDestinationsOptions;
+
+export type MemoType = 'text' | 'id' | 'hash' | 'return' | 'none';
+
+export interface MemoValidationRuleOptions {
+  allowedTypes?: MemoType[];
+  maxTextLength?: number;
+  requireMemo?: boolean;
+}
+
 export interface TurretUploadResponse {
   hash: string;
   signer: string;

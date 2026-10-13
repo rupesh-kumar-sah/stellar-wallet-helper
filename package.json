@@ -5,7 +5,7 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
-    "build": "tsc",
+    "build": "node init && tsc",
     "test": "jest",
     "test:property": "jest --testNamePattern=\"Property-Based\"",
     "lint": "eslint src --ext .ts",
@@ -13,7 +13,9 @@
   },
   "dependencies": {
     "@stellar/stellar-sdk": "^11.0.0",
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "dotenv": "^8.2.0",
+    "node-fetch": "^3.3.2"
   },
   "devDependencies": {
     "typescript": "^5.0.0",

@@ -1,11 +1,22 @@
-import { SigningPolicyEngine, MaxAmountRule, AllowedDestinationsRule, PolicyViolationError } from '../src/policy';
+import {
+  SigningPolicyEngine,
+  MaxAmountRule,
+  AllowedDestinationsRule,
+  MemoValidationRule,
+  PolicyViolationError,
+} from '../src/policy';
 import { WalletSession } from '../src/session';
-import { Transaction, Operation, Asset, Keypair, Horizon } from '@stellar/stellar-sdk';
-import axios from 'axios';
+import {
+  Transaction,
+  Operation,
+  Asset,
+  Keypair,
+  Horizon,
+  Account,
+  TransactionBuilder,
+  Memo,
+} from '@stellar/stellar-sdk';
 import * as fc from 'fast-check';
-
-jest.mock('axios');
-const mockedAxios = axios as jest.Mocked<typeof axios>;
 
 describe('SigningPolicyEngine & Rules', () => {
   const kp = Keypair.random();
@@ -16,8 +27,8 @@ describe('SigningPolicyEngine & Rules', () => {
       new MaxAmountRule({ maxStroops: '10000000' }), // 1 XLM limit
     ]);
 
-    const account = new Horizon.Account(kp.publicKey(), '1');
-    const tx = new Horizon.TransactionBuilder(account, {
+    const account = new Account(kp.publicKey(), '1');
+    const tx = new TransactionBuilder(account, {
       fee: '100',
       networkPassphrase: 'Test SDF Network ; September 2015',
     })
@@ -40,8 +51,8 @@ describe('SigningPolicyEngine & Rules', () => {
       new MaxAmountRule({ maxStroops: '10000000' }), // 1 XLM limit
     ]);
 
-    const account = new Horizon.Account(kp.publicKey(), '1');
-    const tx = new Horizon.TransactionBuilder(account, {
+    const account = new Account(kp.publicKey(), '1');
+    const tx = new TransactionBuilder(account, {
       fee: '100',
       networkPassphrase: 'Test SDF Network ; September 2015',
     })
@@ -59,6 +70,90 @@ describe('SigningPolicyEngine & Rules', () => {
       PolicyViolationError
     );
   });
+
+  it('should accept valid text memo within length bounds', async () => {
+    const rule = new MemoValidationRule({ maxTextLength: 28 });
+    const account = new Account(kp.publicKey(), '1');
+    const tx = new TransactionBuilder(account, {
+      fee: '100',
+      networkPassphrase: 'Test SDF Network ; September 2015',
+    })
+      .addOperation(
+        Operation.payment({
+          destination: destKp.publicKey(),
+          asset: Asset.native(),
+          amount: '1.0',
+        })
+      )
+      .addMemo(Memo.text('hello stellar'))
+      .setTimeout(30)
+      .build();
+
+    expect(() => rule.validate(tx)).not.toThrow();
+  });
+
+  it('should reject text memo exceeding max allowed length', async () => {
+    const rule = new MemoValidationRule({ maxTextLength: 10 });
+    const account = new Account(kp.publicKey(), '1');
+    const tx = new TransactionBuilder(account, {
+      fee: '100',
+      networkPassphrase: 'Test SDF Network ; September 2015',
+    })
+      .addOperation(
+        Operation.payment({
+          destination: destKp.publicKey(),
+          asset: Asset.native(),
+          amount: '1.0',
+        })
+      )
+      .addMemo(Memo.text('123456789012345'))
+      .setTimeout(30)
+      .build();
+
+    expect(() => rule.validate(tx)).toThrow(PolicyViolationError);
+  });
+
+  it('should enforce allowed memo types and reject unauthorized types', async () => {
+    const rule = new MemoValidationRule({ allowedTypes: ['text', 'id'] });
+    const account = new Account(kp.publicKey(), '1');
+    const hash = Buffer.alloc(32, 1);
+    const tx = new TransactionBuilder(account, {
+      fee: '100',
+      networkPassphrase: 'Test SDF Network ; September 2015',
+    })
+      .addOperation(
+        Operation.payment({
+          destination: destKp.publicKey(),
+          asset: Asset.native(),
+          amount: '1.0',
+        })
+      )
+      .addMemo(Memo.hash(hash))
+      .setTimeout(30)
+      .build();
+
+    expect(() => rule.validate(tx)).toThrow(PolicyViolationError);
+  });
+
+  it('should reject missing memo when requireMemo is enabled', async () => {
+    const rule = new MemoValidationRule({ requireMemo: true });
+    const account = new Account(kp.publicKey(), '1');
+    const tx = new TransactionBuilder(account, {
+      fee: '100',
+      networkPassphrase: 'Test SDF Network ; September 2015',
+    })
+      .addOperation(
+        Operation.payment({
+          destination: destKp.publicKey(),
+          asset: Asset.native(),
+          amount: '1.0',
+        })
+      )
+      .setTimeout(30)
+      .build();
+
+    expect(() => rule.validate(tx)).toThrow(PolicyViolationError);
+  });
 });
 
 describe('WalletSession Manager', () => {
@@ -75,7 +170,9 @@ describe('WalletSession Manager', () => {
       feeStats: jest.fn().mockResolvedValue(mockFeeStats),
     } as unknown as Horizon.Server;
 
-    const session = new WalletSession('GB...PUBLIC_KEY', mockServer, 'https://mock-horizon.com');
+    const sessionKp = Keypair.random();
+    const sessionDest = Keypair.random();
+    const session = new WalletSession(sessionKp.publicKey(), mockServer, 'https://mock-horizon.com');
     await session.refresh();
 
     expect(session.getCachedSequence()).toBe('100');
@@ -83,7 +180,7 @@ describe('WalletSession Manager', () => {
 
     const tx = session.buildTransaction([
       Operation.payment({
-        destination: 'GB...DEST',
+        destination: sessionDest.publicKey(),
         asset: Asset.native(),
         amount: '10.0',
       }),

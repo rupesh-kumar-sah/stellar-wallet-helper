@@ -1,5 +1,10 @@
 import { Transaction, Keypair } from '@stellar/stellar-sdk';
-import { PolicyRule, MaxAmountRuleOptions, AllowedDestinationsRuleOptions } from './types';
+import {
+  PolicyRule,
+  MaxAmountRuleOptions,
+  AllowedDestinationsRuleOptions,
+  MemoValidationRuleOptions,
+} from './types';
 
 export class PolicyViolationError extends Error {
   constructor(message: string) {
@@ -47,6 +52,70 @@ export class AllowedDestinationsRule implements PolicyRule {
             `Transaction destination address ${op.destination} is not in the allowed destinations list.`
           );
         }
+      }
+    }
+  }
+}
+
+export class MemoValidationRule implements PolicyRule {
+  public name = 'MemoValidationRule';
+  private allowedTypes?: Set<string>;
+  private maxTextLength: number;
+  private requireMemo: boolean;
+
+  constructor(options: MemoValidationRuleOptions = {}) {
+    this.allowedTypes = options.allowedTypes ? new Set(options.allowedTypes) : undefined;
+    this.maxTextLength = options.maxTextLength ?? 28;
+    this.requireMemo = options.requireMemo ?? false;
+  }
+
+  public validate(tx: Transaction): void {
+    const memo = tx.memo;
+    const memoType = memo ? memo.type : 'none';
+
+    if (this.requireMemo && (memoType === 'none' || !memo)) {
+      throw new PolicyViolationError('Transaction requires a memo, but none was provided.');
+    }
+
+    if (this.allowedTypes && !this.allowedTypes.has(memoType)) {
+      throw new PolicyViolationError(
+        `Memo type "${memoType}" is not allowed. Allowed types: ${Array.from(this.allowedTypes).join(', ')}.`
+      );
+    }
+
+    if (memoType === 'text') {
+      const val = memo.value ? memo.value.toString() : '';
+      const byteLength = Buffer.byteLength(val, 'utf8');
+      if (byteLength > this.maxTextLength) {
+        throw new PolicyViolationError(
+          `Memo text length of ${byteLength} bytes exceeds the maximum allowed limit of ${this.maxTextLength} bytes.`
+        );
+      }
+    } else if (memoType === 'id') {
+      const val = memo.value ? memo.value.toString() : '';
+      if (!/^\d+$/.test(val)) {
+        throw new PolicyViolationError(`Memo ID "${val}" is not a valid 64-bit unsigned integer.`);
+      }
+      try {
+        const bigVal = BigInt(val);
+        const maxUint64 = BigInt('18446744073709551615');
+        if (bigVal < 0n || bigVal > maxUint64) {
+          throw new PolicyViolationError(`Memo ID exceeds 64-bit integer range.`);
+        }
+      } catch (err: unknown) {
+        if (err instanceof PolicyViolationError) throw err;
+        throw new PolicyViolationError(`Invalid Memo ID: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } else if (memoType === 'hash' || memoType === 'return') {
+      const val = memo.value;
+      if (!val) {
+        throw new PolicyViolationError(`Memo ${memoType} must contain a 32-byte hash.`);
+      }
+      const len = Buffer.isBuffer(val) ? val.length : Buffer.from(val, 'hex').length;
+      if (len !== 32) {
+        throw new PolicyViolationError(
+          `Memo ${memoType} must be exactly 32 bytes, received ${len} bytes.`
+        );
       }
     }
   }
